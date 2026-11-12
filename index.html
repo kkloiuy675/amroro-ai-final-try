@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>AMRORO AI - Studio Builder</title>
+    <style>
+        body { margin: 0; font-family: 'Segoe UI', sans-serif; background: #121216; color: #e0e0e6; display: flex; height: 100vh; overflow: hidden; }
+        .sidebar { width: 270px; background: #18181c; border-right: 1px solid #2a2a35; display: flex; flex-direction: column; padding: 18px; }
+        .main { flex: 1; display: flex; flex-direction: column; }
+        .header { height: 60px; background: #18181c; border-bottom: 1px solid #2a2a35; display: flex; align-items: center; justify-content: space-between; padding: 0 24px; }
+        .chat { flex: 1; padding: 24px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
+        .msg { padding: 14px 18px; border-radius: 10px; max-width: 78%; line-height: 1.5; word-break: break-word; }
+        .user { background: #2a2a38; align-self: flex-end; border: 1px solid #3f3f59; }
+        .ai { background: #1c1c24; align-self: flex-start; border: 1px solid #2e2e3d; }
+        .input-area { padding: 20px; background: #18181c; border-top: 1px solid #2a2a35; display: flex; gap: 12px; }
+        input, select { background: #22222a; color: #fff; border: 1px solid #3a3a4f; padding: 12px; border-radius: 8px; font-size: 14px; outline: none; }
+        input[type="text"] { flex: 1; }
+        button { background: #28b463; color: #fff; border: none; padding: 12px 22px; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 14px; }
+        button:hover { background: #2ecc71; }
+        .badge { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #2ecc71; margin-right: 8px; }
+        pre { background: #0d0d11; padding: 12px; border-radius: 8px; overflow-x: auto; border: 1px solid #2a2a35; }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <h2 style="margin:0; color:#8A2BE2;">AMRORO AI</h2>
+        <p style="font-size:12px; color:#888; margin-top:4px;">Direct Studio Game Builder</p>
+        <hr style="border:0; border-top:1px solid #2a2a35; margin:16px 0;">
+
+        <label style="font-size:11px; color:#aaa; margin-bottom:6px;">GEMINI API KEY:</label>
+        <input type="password" id="apiKey" placeholder="Paste AI Studio Key..." style="margin-bottom:14px;">
+
+        <label style="font-size:11px; color:#aaa; margin-bottom:6px;">MODEL:</label>
+        <select id="modelSelect" style="margin-bottom:14px;">
+            <option value="gemini-2.5-flash">Gemini 2.5 Flash (Fast & Smart)</option>
+            <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+        </select>
+
+        <div style="margin-top:auto; font-size:12px; color:#aaa; border-top:1px solid #2a2a35; padding-top:12px;">
+            <p><span class="badge"></span>Bridge Server Ready</p>
+            <p id="buildsCounter">Builds Sent: 0</p>
+        </div>
+    </div>
+
+    <div class="main">
+        <div class="header">
+            <span style="font-weight:bold;">Project: Active Studio Session</span>
+            <button style="background:#333; padding:8px 14px;" onclick="document.getElementById('chat').innerHTML=''">Clear</button>
+        </div>
+        <div class="chat" id="chat">
+            <div class="msg ai">Type what you want to build in Roblox Studio (cars, rigs, lighting, UI, scripts). When you click <b>Build in Studio</b>, it will automatically appear in your game!</div>
+        </div>
+        <div class="input-area">
+            <input type="text" id="promptInput" placeholder="e.g., Make a drivable funny car with neon lights..." onkeydown="if(event.key==='Enter') generateAndSend()">
+            <button onclick="generateAndSend()">Build in Studio</button>
+        </div>
+    </div>
+
+    <script>
+        async function generateAndSend() {
+            const key = document.getElementById('apiKey').value.trim();
+            const prompt = document.getElementById('promptInput').value.trim();
+            const model = document.getElementById('modelSelect').value;
+            const chat = document.getElementById('chat');
+
+            if (!key) return alert("Paste your Gemini API Key on the left first!");
+            if (!prompt) return;
+
+            chat.innerHTML += `<div class="msg user">${prompt}</div>`;
+            document.getElementById('promptInput').value = '';
+            const msgId = 'msg-' + Date.now();
+            chat.innerHTML += `<div class="msg ai" id="${msgId}">Generating Luau script & sending to Roblox Studio...</div>`;
+            chat.scrollTop = chat.scrollHeight;
+
+            try {
+                // 1. Ask Gemini to write executable Studio Luau code
+                const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+                const res = await fetch(geminiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{
+                            parts: [{
+                                text: `You are an expert Roblox Studio Luau developer. Write a single, complete, runnable Luau script that builds and parents everything directly into Workspace, ServerScriptService, or StarterGui as needed for this request: "${prompt}". For UI, always add UICorner, UIStroke, and UIScale. Return ONLY the Luau code inside \`\`\`lua ... \`\`\` tags.`
+                            }]
+                        }]
+                    })
+                });
+
+                const data = await res.json();
+                if (!data.candidates) {
+                    document.getElementById(msgId).innerText = "Gemini API Error: " + JSON.stringify(data.error);
+                    return;
+                }
+
+                const rawText = data.candidates[0].content.parts[0].text;
+                const codeMatch = rawText.match(/```lua([\s\S]*?)```/) || rawText.match(/```([\s\S]*?)```/);
+                const cleanCode = codeMatch ? codeMatch[1].trim() : rawText.trim();
+
+                // 2. Push the generated code to our Vercel Bridge so Roblox Studio receives it
+                const bridgeRes = await fetch('/api/bridge', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ code: cleanCode, prompt: prompt })
+                });
+                const bridgeData = await bridgeRes.json();
+
+                document.getElementById('buildsCounter').innerText = `Builds Sent: ${bridgeData.promptCount || 1}`;
+                document.getElementById(msgId).innerHTML = `✅ <b>Sent to Roblox Studio!</b><pre><code>${cleanCode.replace(/</g, '&lt;')}</code></pre>`;
+            } catch (e) {
+                document.getElementById(msgId).innerText = "Error: " + e.message;
+            }
+            chat.scrollTop = chat.scrollHeight;
+        }
+    </script>
+</body>
+</html>
